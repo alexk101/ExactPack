@@ -259,22 +259,29 @@ def streakplot(solver, soln, xs, t, N=21, var_str='pressure'):
     morphology = solver.soln_type.split('-')[-1]
     xd0 = solver.xd0
     Vregs = solver.Vregs
-    ii = 0
-    if (morphology[0] == 'R'):
-        plt.plot([xd0, Vregs[ii]*t + xd0], [0., t], '--k')
+    if morphology == 'RVR':
+        # Left rarefaction head/tail, right rarefaction tail/head (vacuum mid).
+        plt.plot([xd0, Vregs[0]*t + xd0], [0., t], '--k')
+        plt.plot([xd0, Vregs[1]*t + xd0], [0., t], ':k')
+        plt.plot([xd0, Vregs[2]*t + xd0], [0., t], ':k')
+        plt.plot([xd0, Vregs[3]*t + xd0], [0., t], '--k')
+    else:
+        ii = 0
+        if (morphology[0] == 'R'):
+            plt.plot([xd0, Vregs[ii]*t + xd0], [0., t], '--k')
+            ii += 1
+            plt.plot([xd0, Vregs[ii]*t + xd0], [0., t], '--k')
+        elif (morphology[0] == 'S'):
+            plt.plot([xd0, Vregs[ii]*t + xd0], [0., t], 'k')
         ii += 1
-        plt.plot([xd0, Vregs[ii]*t + xd0], [0., t], '--k')
-    elif (morphology[0] == 'S'):
-        plt.plot([xd0, Vregs[ii]*t + xd0], [0., t], 'k')
-    ii += 1
-    plt.plot([xd0, Vregs[ii]*t + xd0], [0., t], ':k')
-    ii += 1
-    if (morphology[2] == 'R'):
-        plt.plot([xd0, Vregs[ii]*t + xd0], [0., t], '--k')
+        plt.plot([xd0, Vregs[ii]*t + xd0], [0., t], ':k')
         ii += 1
-        plt.plot([xd0, Vregs[ii]*t + xd0], [0., t], '--k')
-    elif (morphology[2] == 'S'):
-        plt.plot([xd0, Vregs[ii]*t + xd0], [0., t], 'k')
+        if (morphology[2] == 'R'):
+            plt.plot([xd0, Vregs[ii]*t + xd0], [0., t], '--k')
+            ii += 1
+            plt.plot([xd0, Vregs[ii]*t + xd0], [0., t], '--k')
+        elif (morphology[2] == 'S'):
+            plt.plot([xd0, Vregs[ii]*t + xd0], [0., t], 'k')
     plt.xlim((xs[0], xs[-1]))
     plt.ylim((0., t))
     plt.xlabel('position')

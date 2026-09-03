@@ -1,6 +1,16 @@
 Release Notes for ExactPack
 ===========================
 
+Unreleased
+----------
+
+* Ideal-gas Riemann (``RiemannIGEOS`` / ``IGEOS_Solver``): expand the star-pressure
+  bisection bracket when ``10 * max(pl, pr)`` fails to change sign (strong jets /
+  high-Mach tubes).
+* Ideal-gas Riemann: implement the two-rarefaction vacuum morphology
+  (``rarefaction-vacuum-rarefaction-RVR``) instead of leaving a stub that raised
+  ``NameError`` via a broken ``eval`` path.
+
 Version 1.7.0 (Dec 2022)
 ------------------------
 

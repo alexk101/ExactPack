@@ -1,7 +1,6 @@
 """Unit tests for the 1D Riemann solvers.
 """
 
-import pytest
 import warnings
 from pytest import approx
 from numpy import array, interp, diff, sqrt, abs, argmin, linspace
@@ -22,7 +21,7 @@ class TestRiemannSetup():
     """
 
     def test_defaults(self):
-        """Test that default values are set accurately and problem is initialized corretly.
+        """Test that default values are set accurately and problem is initialized correctly.
         """
 
         # here are the defaults
@@ -3855,3 +3854,75 @@ class TestRiemannStreakPlot():
 
         riem1_ig_result = riem1_ig_soln._run(xvec, t_final)
         streakplot(solver=riem1_ig_soln, soln=riem1_ig_result, xs=xvec, t=t_final)
+
+
+class TestIGEOSVacuumAndStrongJet():
+    """Regression tests for previously broken IGEOS vacuum and strong-jet tubes.
+
+    Vacuum: ``ur > u_RCVR`` left a stub ``soln_type='R,C,V,C,R'`` that crashed in
+    ``eval``. Strong jet: star pressure exceeded ``pmax = 10*max(pl,pr)``, so
+    ``bisect`` failed with same-sign endpoints.
+    """
+
+    def test_double_rarefaction_vacuum_morphology(self):
+        t = 0.15
+        soln = RiemannIGEOS(
+            rl=1.0, ul=-2.0, pl=0.1, gl=1.4,
+            rr=1.0, ur=2.0, pr=0.1, gr=1.4,
+            xd0=0.5, t=t,
+        )
+        soln.driver()
+        assert soln.soln_type == 'rarefaction-vacuum-rarefaction-RVR'
+        assert soln.px == approx(0.0, abs=1.e-15)
+        assert soln.rx1 == approx(0.0, abs=1.e-15)
+        assert soln.rx2 == approx(0.0, abs=1.e-15)
+        al = sqrt(1.4 * 0.1 / 1.0)
+        ar = al
+        Vregs = array([-2.0 - al,
+                       -2.0 + 2.0 * al / 0.4,
+                        2.0 - 2.0 * ar / 0.4,
+                        2.0 + ar])
+        assert soln.Vregs == approx(Vregs, abs=1.e-12)
+
+    def test_double_rarefaction_vacuum_midstate(self):
+        t = 0.15
+        xd0 = 0.5
+        solver = IGEOS_Solver(
+            rl=1.0, ul=-2.0, pl=0.1, gl=1.4,
+            rr=1.0, ur=2.0, pr=0.1, gr=1.4,
+            xd0=xd0, xmin=0.0, xmax=1.0,
+        )
+        x = linspace(0.0, 1.0, 201)
+        result = solver(x, t)
+        assert solver.soln_type == 'rarefaction-vacuum-rarefaction-RVR'
+        # Vacuum between the rarefaction tails (exclude fan skirts).
+        x_vac_L = xd0 + t * solver.Vregs[1]
+        x_vac_R = xd0 + t * solver.Vregs[2]
+        mid = (x > x_vac_L + 1.e-3) & (x < x_vac_R - 1.e-3)
+        assert mid.any()
+        assert result['density'][mid].max() == approx(0.0, abs=1.e-10)
+        assert result['pressure'][mid].max() == approx(0.0, abs=1.e-10)
+
+    def test_strong_jet_star_pressure_bracket(self):
+        soln = RiemannIGEOS(
+            rl=5.0, ul=30.0, pl=0.4127, gl=1.4,
+            rr=0.5, ur=0.0, pr=0.4127, gr=1.4,
+            xd0=0.1, t=0.1,
+        )
+        soln.driver()
+        assert soln.soln_type == 'shock-contact-shock-SCS'
+        # Historical pmax = 10*max(pl,pr) ~ 4.13; true p* is O(100).
+        assert soln.px == approx(312.58975384320246, rel=1.e-8)
+        assert soln.pmax > 10.0 * max(soln.pl, soln.pr)
+
+    def test_strong_jet_ig_solver_runs(self):
+        solver = IGEOS_Solver(
+            rl=5.0, ul=30.0, pl=0.4127, gl=1.4,
+            rr=0.5, ur=0.0, pr=0.4127, gr=1.4,
+            xd0=0.1, xmin=0.0, xmax=1.0,
+        )
+        x = linspace(0.0, 1.0, 101)
+        result = solver(x, 0.1)
+        assert solver.soln_type.split('-')[-1] == 'SCS'
+        assert result['density'].min() > 0.0
+        assert result['pressure'].min() > 0.0

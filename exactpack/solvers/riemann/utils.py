@@ -1,6 +1,6 @@
 import scipy.integrate
 from scipy.optimize import bisect
-from numpy import linspace, array, sqrt, interp, append, where, argmin, argmax, exp, shape, abs
+from numpy import linspace, array, sqrt, errstate, where, exp, shape
 
 def JWL_f(r, g, inst):
   """The JWL EOS ammends the IGEOS pressure with a term depending on density,
@@ -24,7 +24,10 @@ def JWL_dfdr(r, g, inst):
 
 def sie(p, r, g, inst):
   JWL_fval = 0 if (inst.problem == 'igeos') else JWL_f(r, g, inst)
-  return (p - JWL_fval) / (g - 1.) / r
+  # Vacuum / empty cells have undefined SIE via p/((g-1)r); treat as zero.
+  with errstate(divide='ignore', invalid='ignore'):
+    val = (p - JWL_fval) / (g - 1.) / r
+  return where(r > 0, val, 0. * val)
 
 def dsdr_cP(p, r, g, inst):
   """See [Kamm2015]_ eqs. 5 & 6. The generalized definition for sound speed
@@ -150,6 +153,34 @@ def SCS_call(p, inst):
   rr, pr, ur, gr = inst.rr, inst.pr, inst.ur, inst.gr
   return shock(p, pr, rr, ur, gr, inst) + shock(p, pl, rl, -ul, gl, inst)
 
+
+def bisect_star_pressure(func, p_lo, p_hi, max_p=1.e16):
+  """Bracket and bisect a star-pressure residual.
+
+  The historical upper bound ``p_hi = 10 * max(pl, pr)`` is too small for
+  strong jets / high-Mach tubes (e.g. left state ``ul=30``, ``pl=pr``), where
+  ``p*`` can exceed that ceiling and ``scipy.optimize.bisect`` fails with
+  same-sign endpoints. Expand ``p_hi`` until the residual changes sign.
+
+  Returns
+  -------
+  px : float
+      Root of ``func``.
+  p_hi : float
+      Upper bracket used (may exceed the caller's initial ``p_hi``).
+  """
+  fa = func(p_lo)
+  fb = func(p_hi)
+  while fa * fb > 0.0:
+    p_hi *= 10.0
+    if p_hi > max_p:
+      raise ValueError(
+        'Unable to bracket star-state pressure residual; '
+        'last interval [{}, {}], f=({}, {}).'.format(p_lo, p_hi, fa, fb)
+      )
+    fb = func(p_hi)
+  return bisect(func, p_lo, p_hi), p_hi
+
 def rho_star_shock(px, p, r, g, inst):
   return r * (p * (g-1.) + px * (g+1.)) / (px * (g-1.) + p * (g+1.))
 
@@ -160,6 +191,8 @@ def rho_p_u_rarefaction(p, r, u, g, x, xd0, t, inst):
   sgn = 1 if ((p == inst.pl) and (u == inst.ul) and (r == inst.rl)) else -1
   a = sound_speed(p, r, g, inst)
   y = 2. / (g + 1.) + sgn * (g - 1.) / a / (g + 1.) * (u - (x - xd0) / t)
+  # Clamp: beyond a rarefaction tail into vacuum, y would be negative.
+  y = where(y > 0., y, 0.)
   v = 2. * (sgn * a + (g - 1.) * u / 2. + (x - xd0) / t) / (g + 1.)
   return r * y**(2. / (g - 1.)), p * y**(2. * g / (g - 1.)), v
 

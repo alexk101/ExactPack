@@ -2,9 +2,7 @@ r"""A pure Python, analytic Riemann solver based on the 2013 paper by LoraClavij
 """
 
 from scipy.optimize import bisect
-from numpy import linspace, array, sqrt, interp, append, where, argmin
-
-from exactpack.base import ExactSolver, ExactSolution
+from numpy import linspace, array, interp, append, where, argmin
 
 from exactpack.solvers.riemann.utils import *
 
@@ -115,47 +113,64 @@ class RiemannIGEOS(SetupRiemannProblem):
       if (((pr >= pl) and (ur <= u_SCN_val)) or
           ((pl > pr) and (ur <= u_NCS_val))):
         soln_type, z = 'shock-contact-shock-SCS', -1
-        px = bisect(lambda p: SCS_call(p, self), 0., pmax)
+        px, pmax = bisect_star_pressure(lambda p: SCS_call(p, self), 0., pmax)
         Vsl = shock_velocity(px, pl, rl, ul, gl, self)
         Vsr = shock_velocity(px, pr, rr, ur, gr, self)
       elif ((pr >= pl) and (u_SCN_val < ur <= u_NCR_val)):
         soln_type, z = 'shock-contact-rarefaction-SCR', -1
-        px = bisect(lambda p: SCR_call(p, self), 0., pmax)
+        px, pmax = bisect_star_pressure(lambda p: SCR_call(p, self), 0., pmax)
         Vs = shock_velocity(px, pl, rl, ul, gl, self)
       elif ((pl > pr) and (u_NCS_val < ur <= u_RCN_val)):
         soln_type = 'rarefaction-contact-shock-RCS'
-        px = bisect(lambda p: RCS_call(p, self), 0., pmax)
+        px, pmax = bisect_star_pressure(lambda p: RCS_call(p, self), 0., pmax)
         Vs = shock_velocity(px, pr, rr, ur, gr, self)
       elif (((pr >= pl) and (u_NCR_val < ur <= u_RCVR_val)) or
             ((pl > pr) and (u_RCN_val < ur <= u_RCVR_val))):
         soln_type = 'rarefaction-contact-rarefaction-RCR'
-        px = bisect(lambda p: RCR_call(p, self), 0., pmax)
+        px, pmax = bisect_star_pressure(lambda p: RCR_call(p, self), 0., pmax)
       elif (ur > u_RCVR_val):
-        soln_type = 'R,C,V,C,R'
-        print('the solution for this problem is not ready')
+        # Two rarefactions with vacuum between them (Toro 2009, Sec. 4.6;
+        # Gottlieb & Groth vacuum morphology). px = 0; no contact star states.
+        soln_type = 'rarefaction-vacuum-rarefaction-RVR'
+        px = 0.
+      else:
+        raise RuntimeError('Unrecognized ideal-gas Riemann wave pattern')
+
+      self.pmax = pmax
 
       # Determine the star state values for the contact discontinuity, and the
       # left/right star state vals for density, sound speed and internal energy.
       # These values are time-independent.
-      ux = ul + z * eval(soln_type.split('-')[0] + "(px,pl,rl,0,gl,self)")
-      rx1 = eval('rho_star_'+soln_type.split('-')[0]+'(px,pl,rl,gl,self)')
-      rx2 = eval('rho_star_'+soln_type.split('-')[2]+'(px,pr,rr,gr,self)')
-      ax1 = sound_speed(px, rx1, gl, self)
-      ax2 = sound_speed(px, rx2, gr, self)
-      ex1 = sie(px, rx1,  gl, self)
-      ex2 = sie(px, rx2,  gr, self)
+      if (soln_type == 'rarefaction-vacuum-rarefaction-RVR'):
+        # Vacuum edges: left rarefaction tail and right rarefaction tail.
+        ux_L = ul + 2. * al / (gl - 1.)
+        ux_R = ur - 2. * ar / (gr - 1.)
+        ux = 0.5 * (ux_L + ux_R)
+        rx1 = rx2 = 0.
+        ax1 = ax2 = 0.
+        # sie(0, 0) is undefined; vacuum carries zero density / energy.
+        ex1 = ex2 = 0.
+        Vregs = array([ul - al, ux_L, ux_R, ur + ar])
+      else:
+        ux = ul + z * eval(soln_type.split('-')[0] + "(px,pl,rl,0,gl,self)")
+        rx1 = eval('rho_star_'+soln_type.split('-')[0]+'(px,pl,rl,gl,self)')
+        rx2 = eval('rho_star_'+soln_type.split('-')[2]+'(px,pr,rr,gr,self)')
+        ax1 = sound_speed(px, rx1, gl, self)
+        ax2 = sound_speed(px, rx2, gr, self)
+        ex1 = sie(px, rx1,  gl, self)
+        ex2 = sie(px, rx2,  gr, self)
 
-      # Store velocities that bound regions in time in Vregs. Vh & Vt are the
-      # head and tail rarefaction velocities. These values are time-independent.
-      # For all solutions, the contact discontinuity travels at Vc = ux.
-      if (soln_type == 'shock-contact-shock-SCS'):
-        Vregs = array([Vsl, ux, Vsr])
-      elif (soln_type == 'shock-contact-rarefaction-SCR'):
-        Vregs = array([Vs, ux, ux + ax2, ur + ar])
-      elif (soln_type == 'rarefaction-contact-shock-RCS'):
-        Vregs = array([ul - al, ux - ax1, ux, Vs])
-      elif (soln_type == 'rarefaction-contact-rarefaction-RCR'):
-        Vregs = array([ul - al, ux - ax1, ux, ux + ax2, ur + ar])
+        # Store velocities that bound regions in time in Vregs. Vh & Vt are the
+        # head and tail rarefaction velocities. These values are time-independent.
+        # For all solutions, the contact discontinuity travels at Vc = ux.
+        if (soln_type == 'shock-contact-shock-SCS'):
+          Vregs = array([Vsl, ux, Vsr])
+        elif (soln_type == 'shock-contact-rarefaction-SCR'):
+          Vregs = array([Vs, ux, ux + ax2, ur + ar])
+        elif (soln_type == 'rarefaction-contact-shock-RCS'):
+          Vregs = array([ul - al, ux - ax1, ux, Vs])
+        elif (soln_type == 'rarefaction-contact-rarefaction-RCR'):
+          Vregs = array([ul - al, ux - ax1, ux, ux + ax2, ur + ar])
 
       # Determine the time-dependent spatial boundaries, append these points
       # to the array 'x', and initialize 'vals' for the physical fields.
@@ -198,6 +213,10 @@ class RiemannIGEOS(SetupRiemannProblem):
         vals = reg_state(Xregs[1], x, [px, rx1, ux, ex1], vals)
         vals = reg_state(Xregs[2], x, [px, rx2, ux, ex2], vals)
         vals = rarefaction_region(pr, rr, ur, gr, x, xd0, Xregs[3], t, self)
+      elif (soln_type == 'rarefaction-vacuum-rarefaction-RVR'):
+        vals = rarefaction_region(pl, rl, ul, gl, x, xd0, Xregs[0], t, self)
+        vals = reg_state(Xregs[1], x, [0., 0., ux, 0.], vals)
+        vals = rarefaction_region(pr, rr, ur, gr, x, xd0, Xregs[2], t, self)
       p, r, u, e = reg_state(Xregs[-1], x, [pr, rr, ur, er], vals)
 
       # Storing solution variables
